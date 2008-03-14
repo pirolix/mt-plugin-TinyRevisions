@@ -12,9 +12,12 @@ use File::Path;
 use Data::Dumper;#DEBUG
 use Digest::MD5;
 
+###
+use constant BACKUP_REVISIONS => 10;
+
 use vars qw( $NAME $VERSION );
 $NAME = 'TinyRevisions';
-$VERSION = '1.10 DEVEL';
+$VERSION = '1.20';
 
 use base qw( MT::Plugin );
 my $plugin = MT::Plugin::OMV::TinyRevisions->new({
@@ -25,7 +28,7 @@ my $plugin = MT::Plugin::OMV::TinyRevisions->new({
         author_name => 'Piroli YUKARINOMIYA',
         author_link => 'http://www.magicvox.net/',
         description => <<HTMLHEREDOC,
-Manage user accounts for some services in SKYARC Business Suite.
+Store the revisions of Template, Entry and Webpage.
 HTMLHEREDOC
 });
 MT->add_plugin ($plugin);
@@ -56,12 +59,12 @@ sub _hdlr_object_post_save {
     # MT::Entry
     elsif( ref $obj == 'MT::Entry' ) {
         my $type = 'entry';
-        save_revision_data( $obj, $type, $revision_num, 'text');
+#        save_revision_data( $obj, $type, $revision_num, 'text');
     }
     # MT::Page
     elsif( ref $obj == 'MT::Page' ) {
         my $type = 'page';
-        save_revision_data( $obj, $type, $revision_num, 'text');
+#        save_revision_data( $obj, $type, $revision_num, 'text');
     }
 }
 
@@ -85,20 +88,24 @@ sub save_revision_data {
     if( defined $prev_md5_hash ) {
         my $this_md5_hash = Digest::MD5::md5_hex( $obj->$column );
         unless( $$prev_md5_hash eq $this_md5_hash ) {
+            ### Anything has changed
             save_revisions_data_file( $revisions_path, $revision_num, $obj, $column );
+            remove_old_revisions_data_file( $revisions_path, $column, BACKUP_REVISIONS );
             &instance->save_plugindata( $plugindata_key, \$this_md5_hash );
         }
     } else {
+        ### There is no revisions. save as the first
         my $this_md5_hash = Digest::MD5::md5_hex( $obj->$column );
         save_revisions_data_file( $revisions_path, $revision_num, $obj, $column );
+        remove_old_revisions_data_file( $revisions_path, $column, BACKUP_REVISIONS );
         &instance->save_plugindata( $plugindata_key, \$this_md5_hash );
     }
 
-    #
+    ### Always be saved as the latest
     save_revisions_data_file( $revisions_path, '__latest__', $obj, $column );
 }
 
-###
+### Save the contents into revised file
 sub save_revisions_data_file {
     my( $revisions_path, $revision_num, $obj, $column ) = @_;
     my $filename = File::Spec->catfile( $revisions_path, "$revision_num.$column" );
@@ -108,9 +115,22 @@ sub save_revisions_data_file {
     }
 }
 
+### Leave the revisions within soecified by BACKUP_REVISIONS
+sub remove_old_revisions_data_file {
+    my( $revisions_path, $column, $backup ) = @_;
+    if( opendir( my $dh, $revisions_path )) {
+        map {
+            unlink File::Spec->catfile( $revisions_path, $_ );
+        } grep { --$backup < 0 }
+                reverse sort grep { /\d+\.$column$/ }
+                        readdir $dh;
+        closedir $dh;
+    }
+}
 
 
-###
+
+### Handle MT::PluginData
 use MT::PluginData;
 
 sub load_plugindata {
@@ -139,6 +159,3 @@ sub save_plugindata {
 }
 
 1;
-__END__
-2008/02/22  1.10    内容に差がない場合はファイルを保存しない
-2008/02/18  1.00    MT::Template.text
